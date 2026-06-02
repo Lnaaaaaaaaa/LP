@@ -169,10 +169,7 @@ class LPModel(nn.Module):
             nn.GELU(),
         )
 
-        self.proj_text = nn.Sequential(
-            nn.Linear(dim, dim),
-            nn.LayerNorm(dim),
-        )
+        
 
         # ========== 动态视觉原型生成的 Cross-Attention ==========
         # 使用温度缩放版本
@@ -191,8 +188,8 @@ class LPModel(nn.Module):
 
         # ========== 分类头 ==========
         self.classifier = nn.Sequential(
-            nn.LayerNorm(dim),
-            nn.Linear(dim, dim),
+            nn.LayerNorm(dim * num_classes),
+            nn.Linear(dim * num_classes, dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(dim, num_classes)
@@ -273,40 +270,39 @@ class LPModel(nn.Module):
         N = V_proj.size(0)
 
         # 投影文本原型
-        P_text_proj = self.proj_text(self.P_text)  # (K_t, D)
+       #P_text_proj = self.proj_text(self.P_text)  # (K_t, D)
 
         # 计算相似度矩阵（带温度缩放）
         # S_v[i,k] = 第i个Patch对第k个视觉原型的相似度
         S_v = (1.0 - pairwise_cosine_distance(V_proj, H_p)) / tau  # (N, K)
 
         # S_t[i,j] = 第i个Patch对第j个文本原型的相似度
-        S_t = (1.0 - pairwise_cosine_distance(V_proj, P_text_proj)) / tau  # (N, K_t)
+        S_t = (1.0 - pairwise_cosine_distance(V_proj, self.P_text)) / tau  # (N, K_t)
 
         # 转换为注意力分布
-        attn_v = F.softmax(S_v, dim=-1)  # (N, K)
-        attn_t = F.softmax(S_t, dim=-1)  # (N, K_t)
+        # attn_v = F.softmax(S_v, dim=-1)  # (N, K)
+        # attn_t = F.softmax(S_t, dim=-1)  # (N, K_t)
+        
+        # 【修复2】：计算全局边缘分布 (Marginals)
+        margin_v = F.softmax(S_v.mean(dim=0), dim=-1)  # (K,)
+        margin_t = F.softmax(S_t.mean(dim=0), dim=-1)  # (K_t,)
 
         # 计算视觉原型与文本原型之间的代价矩阵
-        Cost = pairwise_cosine_distance(H_p, P_text_proj)  # (K, K_t)
+        Cost = pairwise_cosine_distance(H_p, self.P_text)  # (K, K_t)
 
         # 实例级最优传输
         # 扩展到batch维度: (N, K) -> (1, N, K), (N, K_t) -> (1, N, K_t)
-        attn_v_batch = attn_v.unsqueeze(0)  # (1, N, K)
-        attn_t_batch = attn_t.unsqueeze(0)  # (1, N, K_t)
+        # attn_v_batch = attn_v.unsqueeze(0)  # (1, N, K)
+        # attn_t_batch = attn_t.unsqueeze(0)  # (1, N, K_t)
 
         # 使用批量Sinkhorn算法
-        T = sinkhorn_ot_batch(attn_v_batch, attn_t_batch, Cost,
+        T = sinkhorn_ot_batch(margin_v, margin_t, Cost,
                               self.ot_epsilon, self.ot_iters)  # (1, N, K, K_t)
-
-        # 融合：将文本原型维度求和，得到实例到视觉原型的融合权重
-        # T[b,n,i,j] 表示第n个Patch中，视觉原型i到文本原型j的传输量
-        # 对j求和得到每个Patch对每个视觉原型的总权重
-        attn_fused = T.sum(dim=-1).squeeze(0)  # (N, K)
-
-        # 归一化
-        attn_fused = F.softmax(attn_fused, dim=-1)
-
-        return attn_fused
+        
+        S_fused = torch.sum((S_v @ T) * S_t, dim=-1)  # (N,)
+    
+        return S_fused
+       
 
     def forward(self, V_patch, labels=None, tau=None):
         """
@@ -353,24 +349,32 @@ class LPModel(nn.Module):
 
         for b in range(B):
             H_p, attn_weights = self.compute_dynamic_prototypes(V_proj[b], tau)
-            attn_fused = self.compute_fused_weights(V_proj[b], H_p, tau)
+            # S_fused 是 (N,) 的标量权重
+            S_fused = self.compute_fused_weights(V_proj[b], H_p, tau)
             H_p_list.append(H_p)
-            attn_fused_list.append(attn_fused)
+            attn_fused_list.append(S_fused)
 
         H_p = torch.stack(H_p_list, dim=0)  # (B, K, D)
         attn_fused = torch.stack(attn_fused_list, dim=0)  # (B, N, K)
 
         # ========== 3. 特征加权（保留原型维度）==========
-        # 方法1：使用注意力加权聚合原型信息
-        # V_fused[b,n,:] = Σ_k attn_fused[b,n,k] * H_p[b,k,:]
-        V_fused = torch.einsum('bnk,bkd->bnd', attn_fused, H_p)  # (B, N, D)
+        # # 方法1：使用注意力加权聚合原型信息
+        # # V_fused[b,n,:] = Σ_k attn_fused[b,n,k] * H_p[b,k,:]
+        # V_fused = torch.einsum('bnk,bkd->bnd', attn_fused, H_p)  # (B, N, D)
+        
+        # 【修复3】：使用标量权重对 Patch 特征进行加权，代替原来的张量 einsum
+        # 这极大降低了特征学习的难度
+        V_fused = S_fused_batch.unsqueeze(-1) * V_proj  # (B, N, D)
 
         # 方法2（可选）：残差连接原始特征
         # V_fused = V_fused + V_proj  # 如果效果不好可以尝试加上
 
         # ========== 4. Bag级交叉注意力聚合 ==========
-        # prompt_bag: (C, D) -> (B, C, D)
-        prompt_bag = self.proj_text(self.prompt_bag).unsqueeze(0).expand(B, -1, -1)
+        # # prompt_bag: (C, D) -> (B, C, D)
+        # prompt_bag = self.proj_text(self.prompt_bag).unsqueeze(0).expand(B, -1, -1)
+        
+        # Bag 级聚合
+        prompt_bag = self.prompt_bag.unsqueeze(0).expand(B, -1, -1) # 直接使用，不投影
 
         bag_feature = self.bag_cross_attn(
             query=prompt_bag,   # (B, C, D)
@@ -378,11 +382,14 @@ class LPModel(nn.Module):
             value=V_fused       # (B, N, D)
         )  # -> (B, C, D)
 
-        # Bag特征聚合（平均池化）
-        bag_feature_pooled = bag_feature.mean(dim=1)  # (B, D)
+        # # Bag特征聚合（平均池化）
+        # bag_feature_pooled = bag_feature.mean(dim=1)  # (B, D)
+        
+        # 【修复4】：展平代替平均池化，保留类别专属语义
+        bag_feature_flat = bag_feature.view(B, -1)  # (B, C * D)
 
         # ========== 5. 分类 ==========
-        logits = self.classifier(bag_feature_pooled)  # (B, num_classes)
+        logits = self.classifier(bag_feature_flat)  # (B, num_classes)
 
         # 构建输出字典
         output = {
@@ -420,6 +427,9 @@ class LPModel(nn.Module):
             output['logits'] = output['logits'].squeeze(0)
             output['H_p'] = output['H_p'].squeeze(0)
             output['attn_fused'] = output['attn_fused'].squeeze(0)
+            
+            
+        
 
         return output
 

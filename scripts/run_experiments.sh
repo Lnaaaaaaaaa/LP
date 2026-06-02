@@ -55,7 +55,7 @@ for K in "${K_VALUES[@]}"; do
 
         # 实验名称
         EXP_NAME="TCGA_RCC_${DATA_NAME}_k=${K}"
-        SAVE_DIR="./results/${EXP_NAME}"
+        SAVE_DIR="./results1/${EXP_NAME}"
         LOG_FILE="${LOG_DIR}/${EXP_NAME}_${TIMESTAMP}.log"
 
         echo ""
