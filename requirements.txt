@@ -1,0 +1,28 @@
+# PyTorch (CUDA 11.8) - 已安装可注释掉
+# torch==2.4.0+cu118
+# torchvision==0.19.0+cu118
+# torchaudio==2.4.0+cu118
+
+# 核心依赖
+numpy
+pandas
+scipy
+scikit-learn
+matplotlib
+seaborn
+tqdm
+pyyaml
+
+# 其他依赖
+h5py
+openslide-python
+opencv-python
+einops
+timm
+transformers
+huggingface-hub
+pytorch-lightning
+wandb
+pot
+lifelines
+scikit-survival

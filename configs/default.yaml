@@ -1,0 +1,53 @@
+# LP 默认配置文件
+# =================
+
+# 数据相关
+data:
+  data_split_json: ./data/tcga_split.json
+  data_csv: ./data/labels.csv
+  h5_file_dir: ./data/features/
+  instance_prompt: ./text_prompt/TCGA_RCC_instance_prompt.json
+  bag_prompt: ./text_prompt/TCGA_RCC_bag_prompt.csv
+
+# 模型相关
+model:
+  dim: 512                    # 特征维度
+  K: 4                        # 视觉原型数量
+  K_t: 4                      # 文本原型数量
+  num_classes: 2              # 类别数
+  num_heads: 8                # 注意力头数
+
+# 训练相关
+training:
+  epochs: 50
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  patience: 15                # 早停容忍轮次
+
+# 温度退火
+temperature:
+  tau_init: 1.0               # 初始温度
+  tau_min: 0.05               # 最小温度
+  decay_rate: 0.95            # 衰减率
+
+# EMA
+ema:
+  momentum: 0.9
+
+# 损失权重
+loss:
+  alpha_ptc: 0.1              # PTC损失权重
+
+# 最优传输
+optimal_transport:
+  epsilon: 0.05               # 熵正则化系数
+  iters: 20                   # Sinkhorn迭代次数
+
+# 其他
+misc:
+  save_dir: ./results/
+  fold: 0
+  seed: 42
+  device: cuda
+  num_workers: 4
+  text_model_weights_path: ./conch/pytorch_model.bin
