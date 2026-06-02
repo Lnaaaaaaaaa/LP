@@ -175,7 +175,7 @@ class WSIDataset(Dataset):
         return features, label
 
 
-def get_dataloader(data_split_json, data_csv, h5_file_dir, idx=0, batch_size=1, num_workers=4):
+def get_dataloader(data_split_json, data_csv, h5_file_dir, idx=0, batch_size=1, num_workers=4, seed=7):
     """
     构建数据加载器
 
@@ -186,6 +186,7 @@ def get_dataloader(data_split_json, data_csv, h5_file_dir, idx=0, batch_size=1, 
         idx: 折索引，用于k折交叉验证（默认为第0折）
         batch_size: 批大小，默认1（因为不同WSI的patch数不同）
         num_workers: 数据加载的并行进程数
+        seed: 随机种子，用于固定shuffle顺序
 
     返回:
         字典: {'train': train_loader, 'valid': valid_loader, 'test': test_loader}
@@ -207,8 +208,12 @@ def get_dataloader(data_split_json, data_csv, h5_file_dir, idx=0, batch_size=1, 
         valid_set = WSIDataset(indices[f'val_{idx}'], data_csv, h5_file_dir)
         test_set = WSIDataset(indices[f'test_{idx}'], data_csv, h5_file_dir)
 
+    # 创建固定的generator用于shuffle，确保每次运行顺序一致
+    g = torch.Generator()
+    g.manual_seed(seed)
+
     # 创建DataLoader
-    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers, generator=g)
     valid_loader = DataLoader(valid_set, batch_size=batch_size, shuffle=False, num_workers=1)
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=1)
 
