@@ -190,4 +190,5 @@ class TemperatureScaledCrossAttention(nn.Module):
             output = output.squeeze(0)
             attn_weights = attn_weights.squeeze(0)
 
-        return output, attn_weights
+        return output, attn_weights  
+    #  output = 所有 patch 特征的加权平均，权重高的贡献大，但不是只取那一个

@@ -23,7 +23,7 @@ from sklearn.preprocessing import label_binarize
 from typing import List, Tuple, Union
 
 
-def set_seed(seed=42):
+def set_seed(seed=7):
     """
     设置随机种子，确保实验可复现
 

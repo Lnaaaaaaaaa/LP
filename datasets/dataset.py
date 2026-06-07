@@ -209,8 +209,8 @@ def get_dataloader(data_split_json, data_csv, h5_file_dir, idx=0, batch_size=1, 
         test_set = WSIDataset(indices[f'test_{idx}'], data_csv, h5_file_dir)
 
     # 创建固定的generator用于shuffle，确保每次运行顺序一致
-    g = torch.Generator()
-    g.manual_seed(seed)
+    g = torch.Generator()  #创建一个独立的随机数生成器 
+    g.manual_seed(seed)    #用固定种子初始化生成器
 
     # 创建DataLoader
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=num_workers, generator=g)

@@ -37,7 +37,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .cross_attention import CrossAttention, TemperatureScaledCrossAttention
-from .optimal_transport import sinkhorn_ot, sinkhorn_ot_batch, pairwise_cosine_distance
+from .optimal_transport import sinkhorn_ot,pairwise_cosine_distance
 
 
 def init_visual_prototypes(K, dim):
@@ -158,7 +158,7 @@ class LPModel(nn.Module):
         # 使用正交初始化
         self.P_vis = nn.Parameter(init_visual_prototypes(K, dim))
 
-        # EMA 状态（buffer，不参与梯度计算）
+        # EMA 状态（buffer，不参与梯度计算）指数移动平均）,就是给参数算一个"平滑版本"，过滤掉训练过程中的波动
         self.register_buffer('P_vis_ema', self.P_vis.data.clone())
 
         # ========== 投影层 ==========
@@ -270,7 +270,7 @@ class LPModel(nn.Module):
             - 返回 (N, K) 而不是 (N,)，保留原型维度信息
             - 使用实例级最优传输，每个Patch独立对齐
         """
-        N = V_proj.size(0)
+        N = V_proj.size(0) #获取有多少个 patch
 
         # 投影文本原型
         P_text_proj = self.proj_text(self.P_text)  # (K_t, D)
@@ -295,7 +295,7 @@ class LPModel(nn.Module):
         attn_t_batch = attn_t.unsqueeze(0)  # (1, N, K_t)
 
         # 使用批量Sinkhorn算法
-        T = sinkhorn_ot_batch(attn_v_batch, attn_t_batch, Cost,
+        T = sinkhorn_ot(attn_v_batch, attn_t_batch, Cost,
                               self.ot_epsilon, self.ot_iters)  # (1, N, K, K_t)
 
         # 融合：将文本原型维度求和，得到实例到视觉原型的融合权重
