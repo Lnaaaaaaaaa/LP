@@ -27,7 +27,8 @@ declare -a DATA_CONFIGS=(
 )
 
 # K值列表
-declare -a K_VALUES=("4" "10")
+# declare -a K_VALUES=("4" "10")
+declare -a K_VALUES=("10")
 
 # 日志目录
 LOG_DIR="./experiment_logs"
@@ -55,7 +56,7 @@ for K in "${K_VALUES[@]}"; do
 
         # 实验名称
         EXP_NAME="TCGA_RCC_${DATA_NAME}_k=${K}"
-        SAVE_DIR="./results/${EXP_NAME}"
+        SAVE_DIR="./results1/${EXP_NAME}"
         LOG_FILE="${LOG_DIR}/${EXP_NAME}_${TIMESTAMP}.log"
 
         echo ""

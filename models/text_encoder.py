@@ -73,6 +73,7 @@ class TextEncoder(nn.Module):
         """
         # 文本分词
         tokenized = tokenize(texts=texts, tokenizer=self.tokenizer)
+        tokenized = tokenized.to(next(self.parameters()).device)
 
         # 使用CONCH编码文本（不计算梯度，模型冻结）
         with torch.no_grad():

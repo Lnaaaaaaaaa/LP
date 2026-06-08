@@ -86,10 +86,10 @@ class LPModel(nn.Module):
            attn_fused = Σ_j T[:,:,j]               (N×K)
             ↓
         4. 特征加权（保留原型维度）
-           V_fused = Σ_k attn_fused[:,:,k] * H_p[k]  (N×D)
+           patch_fused = Σ_k attn_fused[:,:,k] * H_p[k]  (N×D)
             ↓
         5. Bag级交叉注意力聚合
-           bag_feature = CrossAttn(prompt_bag, V_fused) (D)
+           bag_feature = CrossAttn(prompt_bag, patch_fused) (D)
             ↓
         6. 分类与损失
            logits = MLP(LayerNorm(bag_feature))
@@ -345,7 +345,8 @@ class LPModel(nn.Module):
             tau = self.tau_min
 
         # ========== 1. 特征投影 ==========
-        V_proj = self.proj_v(V_patch)  # (B, N, D)
+        # 将patch特征投影到原型空间
+        V_proj = self.proj_v(V_patch)  
 
         # ========== 2. 动态视觉原型生成 ==========
         H_p_list = []
@@ -361,12 +362,12 @@ class LPModel(nn.Module):
         attn_fused = torch.stack(attn_fused_list, dim=0)  # (B, N, K)
 
         # ========== 3. 特征加权（保留原型维度）==========
-        # 方法1：使用注意力加权聚合原型信息
+        # 方法1：使用融合后的注意力加权patch特征
         # V_fused[b,n,:] = Σ_k attn_fused[b,n,k] * H_p[b,k,:]
-        V_fused = torch.einsum('bnk,bkd->bnd', attn_fused, H_p)  # (B, N, D)
+        patch_fused = torch.einsum('bnk,bkd->bnd', attn_fused, H_p)  # (B, N, D)
 
         # 方法2（可选）：残差连接原始特征
-        # V_fused = V_fused + V_proj  # 如果效果不好可以尝试加上
+        patch_fused = patch_fused + V_proj  # 如果效果不好可以尝试加上
 
         # ========== 4. Bag级交叉注意力聚合 ==========
         # prompt_bag: (C, D) -> (B, C, D)
@@ -374,8 +375,8 @@ class LPModel(nn.Module):
 
         bag_feature = self.bag_cross_attn(
             query=prompt_bag,   # (B, C, D)
-            key=V_fused,        # (B, N, D)
-            value=V_fused       # (B, N, D)
+            key=patch_fused,    # (B, N, D)
+            value=patch_fused   # (B, N, D)
         )  # -> (B, C, D)
 
         # Bag特征聚合（平均池化）

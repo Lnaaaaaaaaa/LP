@@ -100,14 +100,14 @@ conda activate lp
 
 ```bash
 python main.py \
-    --data_split_json ./data_4shot/data_split.json \
-    --data_csv ./data_4shot/labels.csv \
+    --data_split_json ./data/data_split.json \
+    --data_csv ./data/labels.csv \
     --h5_file_dir /mnt/sda2/WSI/muti-modal/TCGA-RCC-fea/features \
     --instance_prompt ./text_prompt/TCGA_RCC_instance_prompt.json \
     --bag_prompt ./text_prompt/TCGA_RCC_bag_prompt.csv \
     --text_model_weights_path  /mnt/sda1/ln_workspace/CONCH/checkpoints/pytorch_model.bin \
-    --save_dir  ./results4/TCGA_RCC_k=10 \
-    --K 10 \
+    --save_dir  ./results1/TCGA_RCC_full_k=4 \
+    --K 4 \
     --num_classes 3 \
     --epochs 20
 ```
