@@ -8,6 +8,43 @@
 #   - K值: 4, 10
 #   - 数据量: full, 1-shot, 4-shot, 16-shot
 #   - 总计: 2 × 4 = 8 组实验
+#
+# 离线运行: 脚本会自动检测并以 nohup 方式运行，关闭终端不会中断
+# =============================================================================
+
+# =============================================================================
+# 离线运行检测与自动切换
+# =============================================================================
+# 检查是否已经在 nohup 环境中运行
+if [ -z "$NOHUP_RUNNING" ] && [ -t 0 ]; then
+    echo "[信息] 检测到交互式终端，自动切换到离线运行模式..."
+
+    # 设置环境标记
+    export NOHUP_RUNNING=1
+
+    # 日志目录
+    LOG_DIR="./experiment_logs"
+    mkdir -p $LOG_DIR
+    TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+    NOHUP_LOG="${LOG_DIR}/nohup_main_${TIMESTAMP}.log"
+
+    # 使用 nohup 重启自己
+    nohup bash "$0" > "$NOHUP_LOG" 2>&1 &
+
+    PID=$!
+    echo "[信息] 已在后台启动实验 (PID: $PID)"
+    echo "[信息] 主日志文件: $NOHUP_LOG"
+    echo "[信息] 您可以安全关闭终端，实验将继续运行"
+    echo ""
+    echo "常用命令:"
+    echo "  查看进度: tail -f $NOHUP_LOG"
+    echo "  查看进程: ps aux | grep run_experiments"
+    echo "  终止实验: kill $PID"
+    exit 0
+fi
+
+# =============================================================================
+# 实验配置
 # =============================================================================
 
 # 基础配置
@@ -56,7 +93,7 @@ for K in "${K_VALUES[@]}"; do
 
         # 实验名称
         EXP_NAME="TCGA_RCC_${DATA_NAME}_k=${K}"
-        SAVE_DIR="./results1/${EXP_NAME}"
+        SAVE_DIR="./results2/${EXP_NAME}"
         LOG_FILE="${LOG_DIR}/${EXP_NAME}_${TIMESTAMP}.log"
 
         echo ""
@@ -75,6 +112,13 @@ for K in "${K_VALUES[@]}"; do
 
         if [ ! -f "$DATA_CSV" ]; then
             echo "[警告] 标签文件不存在: $DATA_CSV，跳过此实验"
+            continue
+        fi
+
+        # 检查实验是否已完成
+        SUMMARY_FILE="${SAVE_DIR}/logs/summary_log.csv"
+        if [ -f "$SUMMARY_FILE" ]; then
+            echo "[跳过] 实验已完成，结果文件存在: $SUMMARY_FILE"
             continue
         fi
 

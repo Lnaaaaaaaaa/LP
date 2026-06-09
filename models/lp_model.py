@@ -141,6 +141,12 @@ class LPModel(nn.Module):
         self.ot_epsilon = ot_epsilon
         self.ot_iters = ot_iters
         self.tau_min = tau_min
+        # ========== 用于PTC损失的单位矩阵 ==========
+        self.register_buffer('identity_matrix', torch.eye(K))
+        
+        # 【新增】用于最优传输的可学习温度参数 (模仿 Libra-MIL)
+        self.temp_v = nn.Parameter(torch.tensor(1.0))
+        self.temp_t = nn.Parameter(torch.tensor(1.0))
 
         # ========== 文本原型 (buffer，不参与梯度计算) ==========
         if P_text is not None:
@@ -275,12 +281,12 @@ class LPModel(nn.Module):
         # 投影文本原型
         P_text_proj = self.proj_text(self.P_text)  # (K_t, D)
 
-        # 计算相似度矩阵（带温度缩放）
+        # 计算相似度矩阵
         # S_v[i,k] = 第i个Patch对第k个视觉原型的相似度
-        S_v = (1.0 - pairwise_cosine_distance(V_proj, H_p)) / tau  # (N, K)
+        S_v = torch.einsum("nd,kd->nk", V_proj, H_p) / self.temp_v.exp()  # (N, K)
 
         # S_t[i,j] = 第i个Patch对第j个文本原型的相似度
-        S_t = (1.0 - pairwise_cosine_distance(V_proj, P_text_proj)) / tau  # (N, K_t)
+        S_t = torch.einsum("nd,kd->nk", V_proj, P_text_proj) / self.temp_t.exp()  # (N, K_t)
 
         # 转换为注意力分布
         attn_v = F.softmax(S_v, dim=-1)  # (N, K)
