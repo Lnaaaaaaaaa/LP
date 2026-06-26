@@ -257,8 +257,7 @@ def main():
 
     # 加载Bag级文本提示（CSV格式）
     # 格式: 每行一个类别的文本描述
-    bag_prompts_df = pd.read_csv(args.bag_prompt)
-
+    bag_prompts_df = pd.read_csv(args.bag_prompt,header=None)
     # ---------- 编码文本提示 ----------
     # 使用CONCH模型将文本编码为特征向量
     # CONCH是病理学专用的视觉-语言模型，理解医学术语
@@ -278,13 +277,17 @@ def main():
 
         # Bag级文本原型编码
         # prompt_bag形状: (num_classes, D)
-        if 'prompt' in bag_prompts_df.columns:
-            bag_texts = bag_prompts_df['prompt'].tolist()
-        else:
-            # 如果没有'prompt'列，取第一列
-            bag_texts = bag_prompts_df.iloc[:, 0].tolist()
-        prompt_bag = text_encoder(bag_texts)
+        # 提取所有行的第一列文本
+        bag_texts = bag_prompts_df.iloc[:, 0].tolist()
+        
+        # ⚠️ 修改2：像 Libramil 一样，在这里直接进行切片截断！
+        # 如果你想用高分辨率描述（后 3 行），就用：
+        bag_texts = bag_texts[args.num_classes:] 
+        # 如果你想用低分辨率描述（前 3 行），请改成 bag_texts = bag_texts[:args.num_classes]
 
+        # 把截断后的 3 句话送去编码，出来的 prompt_bag 就严丝合缝是 [3, 512] 了
+        prompt_bag = text_encoder(bag_texts)
+ 
     # 更新K_t为实际加载的文本原型数量
     # 因为实际数量可能由文件内容决定，而非命令行参数
     args.K_t = P_text.shape[0]

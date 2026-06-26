@@ -182,7 +182,21 @@ class LPModel(nn.Module):
             dropout=dropout
         )
 
-        # ========== Bag级交叉注意力聚合 ==========
+        # 🌟 创新点二（进阶版）：视觉引导的门控机制 (Gated Mechanism)
+        # 1. 门控权重生成器 (Gate): 输出 0~1 之间的值，决定放行多少信息
+        self.query_gate = nn.Sequential(
+            nn.Linear(dim * 2, dim),
+            nn.Sigmoid()  
+        )
+        # 2. 候选信息提取器 (Update): 提取视觉和文本碰撞后的新特征
+        self.query_update = nn.Sequential(
+            nn.Linear(dim * 2, dim),
+            nn.Tanh()     # 使用 Tanh 将特征约束在 -1 到 1 之间，增强非线性
+        )
+        # 3. 归一化层: 防止融合后的特征方差过大，稳定训练
+        self.query_norm = nn.LayerNorm(dim)
+
+        # =======jhuuu=== Bag级交叉注意力聚合 ==========
         self.bag_cross_attn = CrossAttention(
             dim=dim,
             num_heads=num_heads,
@@ -369,20 +383,57 @@ class LPModel(nn.Module):
         # 方法2（可选）：残差连接原始特征
         patch_fused = patch_fused + V_proj  # 如果效果不好可以尝试加上
 
-        # ========== 4. Bag级交叉注意力聚合 ==========
-        # prompt_bag: (C, D) -> (B, C, D)
-        prompt_bag = self.proj_text(self.prompt_bag).unsqueeze(0).expand(B, -1, -1)
+        # # ========== 4. Bag级交叉注意力聚合 ==========
+        # # prompt_bag: (C, D) -> (B, C, D)
+        # prompt_bag = self.proj_text(self.prompt_bag).unsqueeze(0).expand(B, -1, -1)
 
-        bag_feature = self.bag_cross_attn(
-            query=prompt_bag,   # (B, C, D)
-            key=patch_fused,    # (B, N, D)
-            value=patch_fused   # (B, N, D)
-        )  # -> (B, C, D)
+        # bag_feature = self.bag_cross_attn(
+        #     query=prompt_bag,   # (B, C, D)
+        #     key=patch_fused,    # (B, N, D)
+        #     value=patch_fused   # (B, N, D)
+        # )  # -> (B, C, D)
 
-        # Bag特征聚合（平均池化）
-        bag_feature_pooled = bag_feature.mean(dim=1)  # (B, D)
+        # # Bag特征聚合（平均池化）
+        # bag_feature_pooled = bag_feature.mean(dim=1)  # (B, D)
+        
+        
+        # ========== 4. 视觉条件化的门控动态交叉注意力 (Gated Dynamic Query) ==========
+        prompt_bag = self.proj_text(self.prompt_bag)
+        
+        # 静态文本 Query
+        prompt_bag_expanded = prompt_bag.unsqueeze(0).expand(B, -1, -1)
+        
+        # 4.1 提取当前 WSI 的全局视觉上下文 (平均池化)
+        global_vis_context = patch_fused.mean(dim=1)
+        
+        # 4.2 扩展视觉特征以匹配文本 Query 的形状
+        global_vis_expanded = global_vis_context.unsqueeze(1).expand(-1, self.num_classes, -1)
+        
+        # 4.3 拼接特征 (用于计算门控和更新值)
+        concat_query = torch.cat([prompt_bag_expanded, global_vis_expanded], dim=-1)
+        
+        # 4.4 门控机制核心：计算门控阀门 (Gate) 和 候选更新信息 (Update)
+        gate = self.query_gate(concat_query)           # 形状: (B, C, D), 值域 [0, 1]
+        update_info = self.query_update(concat_query)  # 形状: (B, C, D), 值域 [-1, 1]
+        
+        # 4.5 门控残差融合 (极其关键)：
+        # 公式: Dynamic_Query = 原文本特征 + 阀门 * 候选新特征
+        # 这样即使视觉特征是纯噪声，模型也可以学到让 gate=0，从而安全退化为原版模型
+        dynamic_prompt_bag = prompt_bag_expanded + gate * update_info
+        dynamic_prompt_bag = self.query_norm(dynamic_prompt_bag) 
+        
+        # 4.6 用门控进化后的“动态 Query”去向视觉特征收网
+        cross_attn_output = self.bag_cross_attn(
+            query=dynamic_prompt_bag, # (B, C, D) 带有宏观底色的动态搜查令
+            key=patch_fused,# (B, N, D) 包含上万个原始 patch 差异性的线索
+            value=patch_fused# (B, N, D)
+        )
+        
+        
 
         # ========== 5. 分类 ==========
+        # 把 (B, C, D) 即 [1, 3, 512] 的多类别特征，通过平均池化压缩为 (B, D) 即 [1, 512]
+        bag_feature_pooled = cross_attn_output.mean(dim=1)
         logits = self.classifier(bag_feature_pooled)  # (B, num_classes)
 
         # 构建输出字典
@@ -396,7 +447,7 @@ class LPModel(nn.Module):
         if labels is not None:
             # 分类损失
             loss_cls = F.cross_entropy(logits, labels)
-
+            
             # PTC损失：约束动态原型正交
             H_p_norm = F.normalize(H_p, p=2, dim=-1)
             # 对每个batch计算PTC损失
