@@ -84,7 +84,7 @@ def get_config():
                         help='权重衰减（L2正则化）')
     parser.add_argument('--patience', type=int, default=15,
                         help='早停耐心值，验证AUC连续N轮不提升则停止')
-    parser.add_argument('--seed', type=int, default=7,
+    parser.add_argument('--seed', type=int, default=4,
                         help='随机种子，确保实验可复现')
 
     # ---------- 温度调度参数 ----------
@@ -103,6 +103,8 @@ def get_config():
                         help='PTC正交损失权重，鼓励原型相互正交')
     parser.add_argument('--num_workers', type=int, default=4,
                         help='数据加载的并行进程数')
+    parser.add_argument('--threshold', type=float, default=0.5,
+                        help='分类阈值（二分类），降低阈值可增加少数类识别率，默认0.5')
     parser.add_argument('--device', type=str, default='cuda',
                         help='计算设备：cuda或cpu')
 
@@ -176,7 +178,7 @@ def train(model, dataloader, optimizer, temp_scheduler, device, epoch, num_class
 
 
 # ==================== 评估函数 ====================
-def evaluate(model, dataloader, device, epoch, num_classes, tau=None):
+def evaluate(model, dataloader, device, epoch, num_classes, tau=None, threshold=0.5):
     """
     模型评估过程（验证集/测试集）
 
@@ -192,6 +194,7 @@ def evaluate(model, dataloader, device, epoch, num_classes, tau=None):
         epoch: 当前轮次
         num_classes: 类别数
         tau: 温度值，验证/测试时使用最小温度
+        threshold: 分类阈值（二分类时使用），默认0.5
 
     Returns:
         tuple: (准确率, AUC, F1分数)
@@ -211,7 +214,17 @@ def evaluate(model, dataloader, device, epoch, num_classes, tau=None):
 
             # 收集预测结果
             probs = torch.softmax(logits, dim=-1)
-            preds = torch.argmax(logits, dim=-1)
+
+            # 二分类阈值调整：降低阈值可增加对少数类(label=1)的识别
+            if num_classes == 2 and threshold != 0.5:
+                # logits 可能被 squeeze 成 1D (num_classes,) 或保持 2D (1, num_classes)
+                if probs.dim() == 1:
+                    pred = 1 if probs[1] > threshold else 0
+                else:
+                    pred = 1 if probs[0, 1] > threshold else 0
+                preds = torch.tensor([pred])
+            else:
+                preds = torch.argmax(logits, dim=-1)
 
             y_true.append(labels.item())
             y_pred.append(preds.item())
@@ -353,11 +366,12 @@ def main():
             tau_min=args.tau_min,
             decay_rate=args.tau_decay_rate
         )
-        # 早停机制：验证AUC连续patience轮不提升则停止
+        # 早停机制：验证ACC连续patience轮不提升则停止
         early_stopping = EarlyStopping(patience=args.patience, mode='max')
 
         # 训练状态变量
-        best_auc = 0.0      # 最佳验证AUC
+        best_acc = 0.0      # 最佳验证ACC
+        best_auc = 0.0      # 最佳验证AUC（用于ACC相同时的次级指标）
         best_epoch = 0      # 最佳epoch编号
 
         # 创建每折训练日志
@@ -377,7 +391,7 @@ def main():
             # 验证
             # 验证时使用最小温度tau_min，使分配更接近硬聚类
             valid_acc, valid_auc, valid_f1 = evaluate(
-                model, loaders['valid'], device, epoch, args.num_classes, tau=args.tau_min
+                model, loaders['valid'], device, epoch, args.num_classes, tau=args.tau_min, threshold=args.threshold
             )
 
             # 获取当前温度并更新学习率
@@ -397,27 +411,33 @@ def main():
                 f"{tau:.4f}",
             ])
 
-            print(f"Epoch {epoch+1:3d} | Train AUC: {train_auc:.4f} | Val AUC: {valid_auc:.4f} | tau: {tau:.3f}")
+            print(f"Epoch {epoch+1:3d} | Train AUC: {train_auc:.4f} | Val ACC: {valid_acc:.4f} | Val AUC: {valid_auc:.4f} | tau: {tau:.3f}")
 
             # 模型保存与早停判断
-            # 使用验证集AUC作为指标，越大越好
-            if valid_auc > best_auc:
+            # 使用验证集ACC作为主指标，AUC作为次级指标（与Libra-MIL一致）
+            if valid_acc > best_acc:
+                best_acc = valid_acc
                 best_auc = valid_auc
                 best_epoch = epoch + 1
                 # 保存最佳模型权重
                 torch.save(model.state_dict(), os.path.join(args.save_dir, f'checkpoints/best_model_{fold}.pt'))
+            elif valid_acc == best_acc and valid_auc > best_auc:
+                # ACC相同但AUC提升，也保存
+                best_auc = valid_auc
+                best_epoch = epoch + 1
+                torch.save(model.state_dict(), os.path.join(args.save_dir, f'checkpoints/best_model_{fold}.pt'))
 
             # 早停检查
-            if early_stopping(valid_auc):
+            if early_stopping(valid_acc):
                 print(f"\n[信息] 早停触发，在 epoch {epoch+1}")
                 break
 
-        print(f"\n[信息] Fold {fold} 训练完成，最佳验证 AUC: {best_auc:.4f} (epoch {best_epoch})")
+        print(f"\n[信息] Fold {fold} 训练完成，最佳验证 ACC: {best_acc:.4f} AUC: {best_auc:.4f} (epoch {best_epoch})")
 
         # ---------- 加载最佳模型并测试 ----------
         # 训练结束后，加载验证集上表现最好的模型进行测试
         model.load_state_dict(torch.load(os.path.join(args.save_dir, f'checkpoints/best_model_{fold}.pt'), weights_only=True))
-        test_acc, test_auc, test_f1 = evaluate(model, loaders['test'], device, best_epoch, args.num_classes, tau=args.tau_min)
+        test_acc, test_auc, test_f1 = evaluate(model, loaders['test'], device, best_epoch, args.num_classes, tau=args.tau_min, threshold=args.threshold)
         print(f"[Fold {fold} 测试结果] ACC: {test_acc:.4f} | AUC: {test_auc:.4f} | F1: {test_f1:.4f}")
 
         # 记录到最终结果日志

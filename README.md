@@ -100,17 +100,35 @@ conda activate lp
 
 ```bash
 python main.py \
-    --data_split_json ./data_1shot/data_split.json \
-    --data_csv ./data_1shot/labels.csv \
-    --h5_file_dir /mnt/sda2/WSI/muti-modal/TCGA-RCC-fea/features \
-    --instance_prompt ./text_prompt/TCGA_RCC_instance_prompt.json \
-    --bag_prompt ./text_prompt/TCGA_RCC_bag_prompt.csv \
+    --data_split_json /mnt/sda1/ln_workspace/Libra-MIL/data/DATA-TCGA-NSCLC/data_1shot/data_split.json \
+    --data_csv /mnt/sda1/ln_workspace/Libra-MIL/data/DATA-TCGA-NSCLC/data_1shot/labels.csv \
+    --h5_file_dir /mnt/sda2/WSI/muti-modal/TCGA-NSCLC-fea/features \
+    --instance_prompt /mnt/sda1/ln_workspace/Libra-MIL/text_prompt/NSCLC/TCGA_NSCLC_instance_prompt.json \
+    --bag_prompt /mnt/sda1/ln_workspace/Libra-MIL/text_prompt/NSCLC/TCGA_NSCLC_two_scale_text_prompt.csv \
     --text_model_weights_path  /mnt/sda1/ln_workspace/CONCH/checkpoints/pytorch_model.bin \
-    --save_dir  ./results_gate/TCGA_RCC_full_k=4 \
-    --K 4 \
-    --num_classes 3 \
-    --epochs 20
+    --save_dir  /mnt/sda1/ln_workspace/LP/results/NSCLC/NSCLC_1shot_k=6_seed=3_study \
+    --K 6 \
+    --num_classes 2 \
+    --epochs 20 \
+    --seed 3
 ```
+ python main.py \
+  --data_split_json /mnt/sda1/ln_workspace/Libra-MIL/data/DATA-CAMELYON16/data_16shot/data_split.json \
+  --data_csv /mnt/sda1/ln_workspace/Libra-MIL/data/DATA-CAMELYON16/data_16shot/labels.csv \
+  --h5_file_dir /mnt/sda2/WSI/muti-modal/TCGA-CAMELYON16-fea/features \
+  --instance_prompt /mnt/sda1/ln_workspace/Libra-MIL/text_prompt/CMELYON16/TCGA_CA16_instance_prompt.json \
+  --bag_prompt /mnt/sda1/ln_workspace/Libra-MIL/text_prompt/CMELYON16/TCGA_CA16_two_scale_text_prompt.csv \
+  --text_model_weights_path /mnt/sda1/ln_workspace/CONCH/checkpoints/pytorch_model.bin \
+  --save_dir ./results/camelyon16/16shot_threshold_0.4_seed4 \
+  --K 10 \
+  --num_classes 2 \
+  --threshold 0.4 \
+  --seed 4 \
+  --epochs 20
+
+
+```
+
 
 ### 主要参数
 

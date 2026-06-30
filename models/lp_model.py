@@ -271,20 +271,21 @@ class LPModel(nn.Module):
         返回:
             attn_fused: (N, K) 每个Patch对每个视觉原型的融合权重
 
-        数学公式:
-            S_v = CosineSim(V_proj, H_p) / tau     # (N, K)
-            S_t = CosineSim(V_proj, P_text) / tau  # (N, K_t)
+        数学公式 (修复传输方向，与Libra-MIL一致):
+            S_v = CosineSim(V_proj, H_p) / tau     # (N, K) 视觉原型注意力
+            S_t = CosineSim(V_proj, P_text) / tau  # (N, K_t) 文本原型注意力
             attn_v = Softmax(S_v, dim=-1)          # (N, K)
             attn_t = Softmax(S_t, dim=-1)          # (N, K_t)
-            Cost = CosineDist(H_p, P_text)         # (K, K_t)
-            T = Sinkhorn(attn_v, attn_t, Cost)     # (N, K, K_t) 实例级OT
-            attn_fused = Σ_j T[:,:,j]              # (N, K)
+            Cost = CosineDist(P_text, H_p)         # (K_t, K) 文本→视觉的代价矩阵
+            T = Sinkhorn(attn_t, attn_v, Cost)     # (N, K_t, K) 文本→视觉传输
+            attn_fused = Σ_i T[:,:,i]              # (N, K) 融合到视觉空间
 
-        关键改进:
-            - 返回 (N, K) 而不是 (N,)，保留原型维度信息
-            - 使用实例级最优传输，每个Patch独立对齐
+        关键修正:
+            - 传输方向改为: 文本先验 → 视觉空间
+            - 文本原型作为源分布(mu)，视觉原型作为目标分布(nu)
+            - 这样才能让文本先验指导视觉特征学习
         """
-        N = V_proj.size(0) #获取有多少个 patch
+        N = V_proj.size(0)  # 获取有多少个 patch
 
         # 投影文本原型
         P_text_proj = self.proj_text(self.P_text)  # (K_t, D)
@@ -297,25 +298,28 @@ class LPModel(nn.Module):
         S_t = (1.0 - pairwise_cosine_distance(V_proj, P_text_proj)) / tau  # (N, K_t)
 
         # 转换为注意力分布
-        attn_v = F.softmax(S_v, dim=-1)  # (N, K)
-        attn_t = F.softmax(S_t, dim=-1)  # (N, K_t)
+        attn_v = F.softmax(S_v, dim=-1)  # (N, K) - 目标分布（视觉）
+        attn_t = F.softmax(S_t, dim=-1)  # (N, K_t) - 源分布（文本）
 
-        # 计算视觉原型与文本原型之间的代价矩阵
-        Cost = pairwise_cosine_distance(H_p, P_text_proj)  # (K, K_t)
+        # 计算文本原型到视觉原型的代价矩阵 (K_t, K)
+        # 与Libra-MIL一致：cost[i,j] = 文本原型i到视觉原型j的距离
+        Cost = pairwise_cosine_distance(P_text_proj, H_p)  # (K_t, K)
 
-        # 实例级最优传输
-        # 扩展到batch维度: (N, K) -> (1, N, K), (N, K_t) -> (1, N, K_t)
-        attn_v_batch = attn_v.unsqueeze(0)  # (1, N, K)
-        attn_t_batch = attn_t.unsqueeze(0)  # (1, N, K_t)
+        # 实例级最优传输 (修正方向：文本→视觉)
+        # mu = attn_t (文本注意力) 作为源分布
+        # nu = attn_v (视觉注意力) 作为目标分布
+        attn_t_batch = attn_t.unsqueeze(0)  # (1, N, K_t) - 源分布
+        attn_v_batch = attn_v.unsqueeze(0)  # (1, N, K) - 目标分布
 
         # 使用批量Sinkhorn算法
-        T = sinkhorn_ot(attn_v_batch, attn_t_batch, Cost,
-                              self.ot_epsilon, self.ot_iters)  # (1, N, K, K_t)
+        # T: (1, N, K_t, K) - 传输方案
+        T = sinkhorn_ot(attn_t_batch, attn_v_batch, Cost,
+                              self.ot_epsilon, self.ot_iters)
 
-        # 融合：将文本原型维度求和，得到实例到视觉原型的融合权重
-        # T[b,n,i,j] 表示第n个Patch中，视觉原型i到文本原型j的传输量
-        # 对j求和得到每个Patch对每个视觉原型的总权重
-        attn_fused = T.sum(dim=-1).squeeze(0)  # (N, K)
+        # 融合：对文本原型维度(K_t)求和，得到融合到视觉空间的权重
+        # T[b,n,i,j] 表示第n个Patch中，文本原型i传输到视觉原型j的量
+        # 对i求和得到每个Patch对每个视觉原型的总权重
+        attn_fused = T.sum(dim=-2).squeeze(0)  # (N, K)
 
         # 归一化
         attn_fused = F.softmax(attn_fused, dim=-1)
