@@ -61,3 +61,4 @@ pretrained/
 
 # Slurm
 slurm-*.out
+ablation_experiments/ablation_experiments.md

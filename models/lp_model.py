@@ -259,72 +259,41 @@ class LPModel(nn.Module):
 
         return H_p, attn_weights
 
-    def compute_fused_weights(self, V_proj, H_p, tau):
+    def compute_prototype_ot_fusion(self, H_p):
         """
-        计算融合权重（实例级最优传输版本）
+        [修改版] 原型级最优传输融合 (Prototype-level OT Fusion)
+        直接在动态视觉原型 (H_p) 和文本实例原型 (P_text) 之间计算 OT
 
         参数:
-            V_proj: (N, D) 投影后的Patch特征
             H_p: (K, D) 动态视觉原型
-            tau: 温度参数
-
         返回:
-            attn_fused: (N, K) 每个Patch对每个视觉原型的融合权重
-
-        数学公式 (修复传输方向，与Libra-MIL一致):
-            S_v = CosineSim(V_proj, H_p) / tau     # (N, K) 视觉原型注意力
-            S_t = CosineSim(V_proj, P_text) / tau  # (N, K_t) 文本原型注意力
-            attn_v = Softmax(S_v, dim=-1)          # (N, K)
-            attn_t = Softmax(S_t, dim=-1)          # (N, K_t)
-            Cost = CosineDist(P_text, H_p)         # (K_t, K) 文本→视觉的代价矩阵
-            T = Sinkhorn(attn_t, attn_v, Cost)     # (N, K_t, K) 文本→视觉传输
-            attn_fused = Σ_i T[:,:,i]              # (N, K) 融合到视觉空间
-
-        关键修正:
-            - 传输方向改为: 文本先验 → 视觉空间
-            - 文本原型作为源分布(mu)，视觉原型作为目标分布(nu)
-            - 这样才能让文本先验指导视觉特征学习
+            H_p_fused: (K, D) 注入了文本先验的新视觉原型
         """
-        N = V_proj.size(0)  # 获取有多少个 patch
-
-        # 投影文本原型
+        # 1. 投影文本原型
         P_text_proj = self.proj_text(self.P_text)  # (K_t, D)
 
-        # 计算相似度矩阵（带温度缩放）
-        # S_v[i,k] = 第i个Patch对第k个视觉原型的相似度
-        S_v = (1.0 - pairwise_cosine_distance(V_proj, H_p)) / tau  # (N, K)
+        # 2. 构造均匀分布作为 OT 的源(文本)和目标(视觉)分布
+        # 为了兼容原代码 sinkhorn_ot 的维度，增加前两个 dummy 维度 (B=1, N=1)
+        mu = torch.ones(1, 1, self.K_t, device=H_p.device) / self.K_t  # (1, 1, K_t)
+        nu = torch.ones(1, 1, self.K, device=H_p.device) / self.K      # (1, 1, K)
 
-        # S_t[i,j] = 第i个Patch对第j个文本原型的相似度
-        S_t = (1.0 - pairwise_cosine_distance(V_proj, P_text_proj)) / tau  # (N, K_t)
-
-        # 转换为注意力分布
-        attn_v = F.softmax(S_v, dim=-1)  # (N, K) - 目标分布（视觉）
-        attn_t = F.softmax(S_t, dim=-1)  # (N, K_t) - 源分布（文本）
-
-        # 计算文本原型到视觉原型的代价矩阵 (K_t, K)
-        # 与Libra-MIL一致：cost[i,j] = 文本原型i到视觉原型j的距离
+        # 3. 计算文本与视觉原型的代价矩阵
         Cost = pairwise_cosine_distance(P_text_proj, H_p)  # (K_t, K)
 
-        # 实例级最优传输 (修正方向：文本→视觉)
-        # mu = attn_t (文本注意力) 作为源分布
-        # nu = attn_v (视觉注意力) 作为目标分布
-        attn_t_batch = attn_t.unsqueeze(0)  # (1, N, K_t) - 源分布
-        attn_v_batch = attn_v.unsqueeze(0)  # (1, N, K) - 目标分布
+        # 4. 最优传输计算
+        # T: (1, 1, K_t, K)
+        T = sinkhorn_ot(mu, nu, Cost, self.ot_epsilon, self.ot_iters)
+        T = T.squeeze(0).squeeze(0)  # 去除 dummy 维度 -> (K_t, K)
 
-        # 使用批量Sinkhorn算法
-        # T: (1, N, K_t, K) - 传输方案
-        T = sinkhorn_ot(attn_t_batch, attn_v_batch, Cost,
-                              self.ot_epsilon, self.ot_iters)
+        # 5. 特征注入 (Text -> Vision)
+        # 方案A：对每列做 softmax 归一化，让每个视觉原型获得完整加权的文本特征
+        T_col_norm = F.softmax(T, dim=0)  # (K_t, K)，每列和为 1
+        H_p_text = torch.matmul(T_col_norm.t(), P_text_proj)  # (K, K_t) @ (K_t, D) -> (K, D)
 
-        # 融合：对文本原型维度(K_t)求和，得到融合到视觉空间的权重
-        # T[b,n,i,j] 表示第n个Patch中，文本原型i传输到视觉原型j的量
-        # 对i求和得到每个Patch对每个视觉原型的总权重
-        attn_fused = T.sum(dim=-2).squeeze(0)  # (N, K)
+        # 6. 融合 (残差相加)
+        H_p_fused = H_p + H_p_text
 
-        # 归一化
-        attn_fused = F.softmax(attn_fused, dim=-1)
-
-        return attn_fused
+        return H_p_fused
 
     def forward(self, V_patch, labels=None, tau=None):
         """
@@ -364,27 +333,35 @@ class LPModel(nn.Module):
 
         # ========== 1. 特征投影 ==========
         # 将patch特征投影到原型空间
-        V_proj = self.proj_v(V_patch)  
+        V_proj = self.proj_v(V_patch)
 
-        # ========== 2. 动态视觉原型生成 ==========
-        H_p_list = []
-        attn_fused_list = []
+        H_p_fused_list = []
+        attn_v_list = []
+        H_p_orig_list = [] # 保留原始 H_p 用于计算 PTC 正交损失
 
         for b in range(B):
-            H_p, attn_weights = self.compute_dynamic_prototypes(V_proj[b], tau)
-            attn_fused = self.compute_fused_weights(V_proj[b], H_p, tau)
-            H_p_list.append(H_p)
-            attn_fused_list.append(attn_fused)
+            # 2.1 获取纯视觉动态原型 (和原来一样)
+            H_p_orig, _ = self.compute_dynamic_prototypes(V_proj[b], tau)
+            H_p_orig_list.append(H_p_orig)
 
-        H_p = torch.stack(H_p_list, dim=0)  # (B, K, D)
-        attn_fused = torch.stack(attn_fused_list, dim=0)  # (B, N, K)
+            # 2.2 [修改点] 将 hp 和 instance(P_text) 进行直接 OT 融合
+            H_p_fused = self.compute_prototype_ot_fusion(H_p_orig)
+            H_p_fused_list.append(H_p_fused)
 
-        # ========== 3. 特征加权（保留原型维度）==========
-        # 方法1：使用融合后的注意力加权patch特征
-        # V_fused[b,n,:] = Σ_k attn_fused[b,n,k] * H_p[b,k,:]
-        patch_fused = torch.einsum('bnk,bkd->bnd', attn_fused, H_p)  # (B, N, D)
+            # 2.3 [修改点] 纯视觉单向交叉注意力 (完美贴合框架图C模块)
+            # 用融合后的 H_p_fused 去向 Patch 收网
+            S_v = (1.0 - pairwise_cosine_distance(V_proj[b], H_p_fused)) / tau  # (N, K)
+            attn_v = F.softmax(S_v, dim=-1)  # (N, K)
+            attn_v_list.append(attn_v)
 
-        # 方法2（可选）：残差连接原始特征
+        H_p = torch.stack(H_p_orig_list, dim=0)          # (B, K, D) 用于 PTC Loss
+        H_p_fused = torch.stack(H_p_fused_list, dim=0)   # (B, K, D) 用于特征聚合
+        attn_fused = torch.stack(attn_v_list, dim=0)     # (B, N, K) 聚合权重
+
+        # ========== 3. 特征加权（使用融合后的原型）==========
+        # patch_fused[b,n,:] = Σ_k attn_fused[b,n,k] * H_p_fused[b,k,:]
+        patch_fused = torch.einsum('bnk,bkd->bnd', attn_fused, H_p_fused)  # (B, N, D)
+
         patch_fused = patch_fused + V_proj  # 如果效果不好可以尝试加上
 
         # # ========== 4. Bag级交叉注意力聚合 ==========

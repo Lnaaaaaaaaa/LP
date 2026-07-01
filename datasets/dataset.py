@@ -37,12 +37,13 @@ def build_h5_path_map(h5_file_dir):
     功能:
         递归搜索目录下的所有h5文件，建立 {样本名: 文件路径} 的映射表
         支持平铺结构和分子目录结构
+        支持大小写不敏感匹配（UUID大小写问题）
 
     参数:
         h5_file_dir: h5文件的根目录
 
     返回:
-        name_to_path: {样本名(stem): 完整文件路径} 的字典
+        name_to_path: {样本名小写: (原始样本名, 完整文件路径)} 的字典
 
     示例:
         输入目录结构:
@@ -56,22 +57,23 @@ def build_h5_path_map(h5_file_dir):
 
         返回:
             {
-                'sample1': '/path/to/features/TCGA-KICH/sample1.h5',
-                'sample2': '/path/to/features/TCGA-KICH/sample2.h5',
-                'sample3': '/path/to/features/TCGA-KIRC/sample3.h5',
-                'sample4': '/path/to/features/TCGA-KIRC/sample4.h5',
+                'sample1': ('sample1', '/path/to/features/TCGA-KICH/sample1.h5'),
+                'sample2': ('sample2', '/path/to/features/TCGA-KICH/sample2.h5'),
+                'sample3': ('sample3', '/path/to/features/TCGA-KIRC/sample3.h5'),
+                'sample4': ('sample4', '/path/to/features/TCGA-KIRC/sample4.h5'),
             }
     """
     h5_file_dir = os.path.abspath(h5_file_dir)
     name_to_path = {}
 
-    # 递归搜索所有h5文件
+    # 递归搜索所有h5文件，使用小写作为key实现大小写不敏感匹配
     for root, dirs, files in os.walk(h5_file_dir):
         for file in files:
             if file.endswith('.h5'):
                 sample_name = os.path.splitext(file)[0]
                 full_path = os.path.join(root, file)
-                name_to_path[sample_name] = full_path
+                # 使用小写作为key，保存原始名称和路径
+                name_to_path[sample_name.lower()] = (sample_name, full_path)
 
     return name_to_path
 
@@ -125,16 +127,20 @@ class WSIDataset(Dataset):
 
         # 遍历所有样本，加载特征
         for name in tqdm(indices, desc="Loading WSI features"):
-            if name not in self.name_to_path:
+            # 使用小写进行查找（大小写不敏感）
+            name_lower = name.lower()
+            if name_lower not in self.name_to_path:
                 missing_files.append(name)
                 continue
 
+            # 检查标签（使用原始名称）
             if name not in self.name_label:
                 missing_labels.append(name)
                 continue
 
             try:
-                h5_path = self.name_to_path[name]
+                # 获取 (原始名称, 路径) 元组
+                orig_name, h5_path = self.name_to_path[name_lower]
                 with h5py.File(h5_path, 'r') as h5:
                     self.features[name] = torch.tensor(h5['features'][:], dtype=torch.float32)
                 self.indices.append(name)

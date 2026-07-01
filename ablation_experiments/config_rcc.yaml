@@ -1,0 +1,38 @@
+# RCC数据集消融实验配置
+# ========================
+# 用于BIBM 2026投稿
+
+# 数据路径 (请修改为实际路径)
+data_split_json: "/path/to/RCC/splits.json"
+data_csv: "/path/to/RCC/labels.csv"
+h5_file_dir: "/path/to/RCC/h5_files/"
+instance_prompt: "/path/to/RCC/instance_prompts.json"
+bag_prompt: "/path/to/RCC/bag_prompts.csv"
+text_model_weights_path: "conch/pytorch_model.bin"
+
+# 模型参数
+dim: 512
+K: 4              # 视觉原型数量
+K_t: 33           # 文本原型数量
+num_classes: 3    # RCC分类: ccRCC, pRCC, chRCC
+num_heads: 8
+ot_epsilon: 0.05
+ot_iters: 20
+
+# 训练参数
+folds: 5
+epochs: 50
+lr: 0.0001
+weight_decay: 0.0001
+patience: 15
+seed: 4
+threshold: 0.5
+
+# 温度调度
+tau_init: 1.0
+tau_min: 0.05
+tau_decay_rate: 0.95
+
+# 其他
+ema_momentum: 0.9
+alpha_ptc: 0.1

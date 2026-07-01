@@ -100,17 +100,19 @@ conda activate lp
 
 ```bash
 python main.py \
-    --data_split_json /mnt/sda1/ln_workspace/Libra-MIL/data/DATA-TCGA-NSCLC/data_1shot/data_split.json \
-    --data_csv /mnt/sda1/ln_workspace/Libra-MIL/data/DATA-TCGA-NSCLC/data_1shot/labels.csv \
+    --data_split_json /mnt/sda1/ln_workspace/Libra-MIL/data/DATA-TCGA-NSCLC/data_4shot/data_split.json \
+    --data_csv /mnt/sda1/ln_workspace/Libra-MIL/data/DATA-TCGA-NSCLC/data_4shot/labels.csv \
     --h5_file_dir /mnt/sda2/WSI/muti-modal/TCGA-NSCLC-fea/features \
     --instance_prompt /mnt/sda1/ln_workspace/Libra-MIL/text_prompt/NSCLC/TCGA_NSCLC_instance_prompt.json \
     --bag_prompt /mnt/sda1/ln_workspace/Libra-MIL/text_prompt/NSCLC/TCGA_NSCLC_two_scale_text_prompt.csv \
     --text_model_weights_path  /mnt/sda1/ln_workspace/CONCH/checkpoints/pytorch_model.bin \
-    --save_dir  /mnt/sda1/ln_workspace/LP/results/NSCLC/NSCLC_1shot_k=6_seed=3_study \
+    --save_dir  /mnt/sda1/ln_workspace/LP/results/NSCLC/new/4-shot-opt_seed=7 \
     --K 6 \
+    --K_t 33 \
     --num_classes 2 \
     --epochs 20 \
-    --seed 3
+    --lr 5e-5 \
+    --seed 7
 ```
  python main.py \
   --data_split_json /mnt/sda1/ln_workspace/Libra-MIL/data/DATA-CAMELYON16/data_16shot/data_split.json \
@@ -119,15 +121,30 @@ python main.py \
   --instance_prompt /mnt/sda1/ln_workspace/Libra-MIL/text_prompt/CMELYON16/TCGA_CA16_instance_prompt.json \
   --bag_prompt /mnt/sda1/ln_workspace/Libra-MIL/text_prompt/CMELYON16/TCGA_CA16_two_scale_text_prompt.csv \
   --text_model_weights_path /mnt/sda1/ln_workspace/CONCH/checkpoints/pytorch_model.bin \
-  --save_dir ./results/camelyon16/16shot_threshold_0.4_seed4 \
-  --K 10 \
+  --save_dir ./results/camelyon16/new/16_shot_K4_seed7 \
+  --K 4 \
+  --K_t 29 \
   --num_classes 2 \
-  --threshold 0.4 \
-  --seed 4 \
-  --epochs 20
+  --threshold 0.25 \
+  --seed 7 \
+  --epochs 50 \
+  --lr 5e-5
 
 
 ```
+
+ python main.py \
+  --data_split_json /mnt/sda1/ln_workspace/Libra-MIL/data/DATA-TCGA-RCC/data_16shot/data_split.json \
+  --data_csv /mnt/sda1/ln_workspace/Libra-MIL/data/DATA-TCGA-RCC/data_16shot/labels.csv \
+  --h5_file_dir /mnt/sda2/WSI/muti-modal/TCGA-RCC-fea/features \
+  --instance_prompt /mnt/sda1/ln_workspace/Libra-MIL/text_prompt/RCC/TCGA_RCC_instance_prompt.json \
+  --bag_prompt /mnt/sda1/ln_workspace/Libra-MIL/text_prompt/RCC/TCGA_RCC_two_scale_text_prompt.csv \
+  --text_model_weights_path /mnt/sda1/ln_workspace/CONCH/checkpoints/pytorch_model.bin \
+  --save_dir /mnt/sda1/ln_workspace/LP/results/RCC/new_model/16_shottest \
+  --K 10 \
+  --K_t 46 \
+  --num_classes 3 \
+  --epochs 20
 
 
 ### 主要参数

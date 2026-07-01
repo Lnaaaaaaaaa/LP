@@ -62,7 +62,7 @@ def get_config():
                         help='特征维度（需与预提取特征维度一致）')
     parser.add_argument('--K', type=int, default=4,
                         help='视觉原型数量，用于聚类patch特征')
-    parser.add_argument('--K_t', type=int, default=46,
+    parser.add_argument('--K_t', type=int, default=33,
                         help='文本原型数量，由instance_prompt文件决定')
     parser.add_argument('--num_classes', type=int, default=3,
                         help='分类类别数')
